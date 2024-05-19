@@ -1,10 +1,10 @@
 {
-  "id": "obsidian-filename-heading-sync",
-  "name": "Filename Heading Sync",
-  "version": "1.8.0",
-  "minAppVersion": "0.11.0",
-  "description": "Obsidian plugin for keeping the filename with the first heading of a file in sync",
-  "author": "dvcrn",
-  "authorUrl": "https://github.com/dvcrn/obsidian-filename-heading-sync",
+  "id": "obsidian-heading-overrides-filename",
+  "name": "Heading Overrides Filename",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Obsidian plugin that renames the file with an adjusted version of the first heading 1",
+  "author": "andrezgz",
+  "authorUrl": "https://obsidian.md",
   "isDesktopOnly": false
 }

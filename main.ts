@@ -17,36 +17,31 @@ interface LinePointer {
   text: string;
 }
 
-interface FilenameHeadingSyncPluginSettings {
+interface HeadingOverridesFilenamePluginSettings {
   userIllegalSymbols: string[];
+  userIllegalSymbolsReplacement: string;
   ignoreRegex: string;
   ignoredFiles: { [key: string]: null };
-  useFileOpenHook: boolean;
+  useAlphanumericOnly: boolean;
   useFileSaveHook: boolean;
 }
 
-const DEFAULT_SETTINGS: FilenameHeadingSyncPluginSettings = {
+const DEFAULT_SETTINGS: HeadingOverridesFilenamePluginSettings = {
   userIllegalSymbols: [],
+  userIllegalSymbolsReplacement: '',
   ignoredFiles: {},
   ignoreRegex: '',
-  useFileOpenHook: true,
+  useAlphanumericOnly: true,
   useFileSaveHook: true,
 };
 
-export default class FilenameHeadingSyncPlugin extends Plugin {
+export default class HeadingOverridesFilenamePlugin extends Plugin {
   isRenameInProgress: boolean = false;
-  settings: FilenameHeadingSyncPluginSettings;
+  settings: HeadingOverridesFilenamePluginSettings;
 
   async onload() {
     await this.loadSettings();
 
-    this.registerEvent(
-      this.app.vault.on('rename', (file, oldPath) => {
-        if (this.settings.useFileSaveHook) {
-          return this.handleSyncFilenameToHeading(file, oldPath);
-        }
-      }),
-    );
     this.registerEvent(
       this.app.vault.on('modify', (file) => {
         if (this.settings.useFileSaveHook) {
@@ -55,13 +50,13 @@ export default class FilenameHeadingSyncPlugin extends Plugin {
       }),
     );
 
-    this.registerEvent(
-      this.app.workspace.on('file-open', (file) => {
-        if (this.settings.useFileOpenHook && file !== null) {
-          return this.handleSyncFilenameToHeading(file, file.path);
-        }
-      }),
-    );
+    // this.registerEvent(
+    //   this.app.workspace.on('file-open', (file) => {
+    //     if (this.settings.useFileOpenHook && file !== null) {
+    //       return this.handleSyncHeadingToFile(file);
+    //     }
+    //   }),
+    // );
 
     this.addSettingTab(new FilenameHeadingSyncSettingTab(this.app, this));
 
@@ -81,13 +76,6 @@ export default class FilenameHeadingSyncPlugin extends Plugin {
         }
         return false;
       },
-    });
-
-    this.addCommand({
-      id: 'sync-filename-to-heading',
-      name: 'Sync Filename to Heading',
-      editorCallback: (editor: Editor, view: MarkdownView) =>
-        this.forceSyncFilenameToHeading(view.file),
     });
 
     this.addCommand({
@@ -173,67 +161,6 @@ export default class FilenameHeadingSyncPlugin extends Plugin {
   }
 
   /**
-   * Syncs the current filename to the first heading
-   * Finds the first heading of the file, then replaces it with the filename
-   *
-   * @param      {TAbstractFile}  file     The file that fired the event
-   * @param      {string}         oldPath  The old path
-   */
-  handleSyncFilenameToHeading(file: TAbstractFile, oldPath: string) {
-    if (this.isRenameInProgress) {
-      return;
-    }
-
-    if (!(file instanceof TFile)) {
-      return;
-    }
-
-    if (file.extension !== 'md') {
-      // just bail
-      return;
-    }
-
-    // if oldpath is ignored, hook in and update the new filepath to be ignored instead
-    if (this.fileIsIgnored(file, oldPath.trim())) {
-      // if filename didn't change, just bail, nothing to do here
-      if (file.path === oldPath) {
-        return;
-      }
-
-      // If filepath changed and the file was in the ignore list before,
-      // remove it from the list and add the new one instead
-      if (this.settings.ignoredFiles[oldPath]) {
-        delete this.settings.ignoredFiles[oldPath];
-        this.settings.ignoredFiles[file.path] = null;
-        this.saveSettings();
-      }
-      return;
-    }
-
-    this.forceSyncFilenameToHeading(file);
-  }
-
-  forceSyncFilenameToHeading(file: TFile) {
-    const sanitizedHeading = this.sanitizeHeading(file.basename);
-    this.app.vault.read(file).then((data) => {
-      const lines = data.split('\n');
-      const start = this.findNoteStart(lines);
-      const heading = this.findHeading(lines, start);
-
-      if (heading !== null) {
-        if (this.sanitizeHeading(heading.text) !== sanitizedHeading) {
-          this.replaceLineInFile(
-            file,
-            lines,
-            heading.lineNumber,
-            `# ${sanitizedHeading}`,
-          );
-        }
-      } else this.insertLineInFile(file, lines, start, `# ${sanitizedHeading}`);
-    });
-  }
-
-  /**
    * Finds the start of the note file, excluding frontmatter
    *
    * @param {string[]} fileLines array of the file's contents, line by line
@@ -279,8 +206,19 @@ export default class FilenameHeadingSyncPlugin extends Plugin {
 
   sanitizeHeading(text: string) {
     // stockIllegalSymbols is a regExp object, but userIllegalSymbols is a list of strings and therefore they are handled separately.
-    text = text.replace(stockIllegalSymbols, '');
+    text = text.replace(stockIllegalSymbols, this.settings.userIllegalSymbolsReplacement);
 
+    const userIllegalSymbolsReplacementEscaped = this.regExpEscape(this.settings.userIllegalSymbolsReplacement);
+
+    if (this.settings.useAlphanumericOnly) {
+      const AlphanumericOnlyRegExp = new RegExp(
+        `[^a-zA-Z0-9${userIllegalSymbolsReplacementEscaped}]`,
+        'g',
+      );
+      text = text.replace(AlphanumericOnlyRegExp, this.settings.userIllegalSymbolsReplacement);
+    }
+
+    // replace userIllegalSymbols with userIllegalSymbolsReplacement character
     const userIllegalSymbolsEscaped = this.settings.userIllegalSymbols.map(
       (str) => this.regExpEscape(str),
     );
@@ -288,62 +226,16 @@ export default class FilenameHeadingSyncPlugin extends Plugin {
       userIllegalSymbolsEscaped.join('|'),
       'g',
     );
-    text = text.replace(userIllegalSymbolsRegExp, '');
+    text = text.replace(userIllegalSymbolsRegExp, this.settings.userIllegalSymbolsReplacement);
+
+    // replace consecutive userIllegalSymbolsReplacement characters with a single one
+    const consecutiveUserIllegalSymbolsRegExp = new RegExp(
+      `${userIllegalSymbolsReplacementEscaped}+`,
+      'g',
+    );
+    text = text.replace(consecutiveUserIllegalSymbolsRegExp, this.settings.userIllegalSymbolsReplacement);
+
     return text.trim();
-  }
-
-  /**
-   * Modifies the file by replacing a particular line with new text.
-   *
-   * The function will add a newline character at the end of the replaced line.
-   *
-   * If the `lineNumber` parameter is higher than the index of the last line of the file
-   * the function will add a newline character to the current last line and append a new
-   * line at the end of the file with the new text (essentially a new last line).
-   *
-   * @param {TFile} file the file to modify
-   * @param {string[]} fileLines array of the file's contents, line by line
-   * @param {number} lineNumber zero-based index of the line to replace
-   * @param {string} text the new text
-   */
-  replaceLineInFile(
-    file: TFile,
-    fileLines: string[],
-    lineNumber: number,
-    text: string,
-  ) {
-    if (lineNumber >= fileLines.length) {
-      fileLines.push(text + '\n');
-    } else {
-      fileLines[lineNumber] = text;
-    }
-    const data = fileLines.join('\n');
-    this.app.vault.modify(file, data);
-  }
-
-  /**
-   * Modifies the file by inserting a line with specified text.
-   *
-   * The function will add a newline character at the end of the inserted line.
-   *
-   * @param {TFile} file the file to modify
-   * @param {string[]} fileLines array of the file's contents, line by line
-   * @param {number} lineNumber zero-based index of where the line should be inserted
-   * @param {string} text the text that the line shall contain
-   */
-  insertLineInFile(
-    file: TFile,
-    fileLines: string[],
-    lineNumber: number,
-    text: string,
-  ) {
-    if (lineNumber >= fileLines.length) {
-      fileLines.push(text + '\n');
-    } else {
-      fileLines.splice(lineNumber, 0, text);
-    }
-    const data = fileLines.join('\n');
-    this.app.vault.modify(file, data);
   }
 
   async loadSettings() {
@@ -356,10 +248,10 @@ export default class FilenameHeadingSyncPlugin extends Plugin {
 }
 
 class FilenameHeadingSyncSettingTab extends PluginSettingTab {
-  plugin: FilenameHeadingSyncPlugin;
+  plugin: HeadingOverridesFilenamePlugin;
   app: App;
 
-  constructor(app: App, plugin: FilenameHeadingSyncPlugin) {
+  constructor(app: App, plugin: HeadingOverridesFilenamePlugin) {
     super(app, plugin);
     this.plugin = plugin;
     this.app = app;
@@ -393,18 +285,24 @@ class FilenameHeadingSyncSettingTab extends PluginSettingTab {
 
     containerEl.empty();
 
-    containerEl.createEl('h2', { text: 'Filename Heading Sync' });
-    containerEl.createEl('p', {
-      text:
-        'This plugin will overwrite the first heading found in a file with the filename.',
-    });
-    containerEl.createEl('p', {
-      text:
-        'If no header is found, will insert a new one at the first line (after frontmatter).',
-    });
+    containerEl.createEl('h2', { text: 'Heading Overrides Filename' });
 
     new Setting(containerEl)
-      .setName('Custom Illegal Characters/Strings')
+      .setName('Use Alphanumeric characters only')
+      .setDesc(
+        'Wether the filename is restricted to alphanumeric characters only (+ the character replacement). Disable to allow any character.',
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.useAlphanumericOnly)
+          .onChange(async (value) => {
+            this.plugin.settings.useAlphanumericOnly = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Custom Characters/Strings to be replaced')
       .setDesc(
         'Type characters/strings separated by a comma. This input is space sensitive.',
       )
@@ -414,6 +312,21 @@ class FilenameHeadingSyncSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.userIllegalSymbols.join())
           .onChange(async (value) => {
             this.plugin.settings.userIllegalSymbols = value.split(',');
+            await this.plugin.saveSettings();
+          }),
+      );
+
+      new Setting(containerEl)
+      .setName('Character replacement')
+      .setDesc(
+        'Type character to replace unwanted strings. Leave empty to remove them.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('-')
+          .setValue(this.plugin.settings.userIllegalSymbolsReplacement)
+          .onChange(async (value) => {
+            this.plugin.settings.userIllegalSymbolsReplacement = value;
             await this.plugin.saveSettings();
           }),
       );
@@ -441,23 +354,9 @@ class FilenameHeadingSyncSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Use File Open Hook')
-      .setDesc(
-        'Whether this plugin should trigger when a file is opened, and not just on save. Disable this when you notice conflicts with other plugins that also act on file open.',
-      )
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.useFileOpenHook)
-          .onChange(async (value) => {
-            this.plugin.settings.useFileOpenHook = value;
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
       .setName('Use File Save Hook')
       .setDesc(
-        'Whether this plugin should trigger when a file is saved. Disable this when you want to trigger sync only manually.',
+        'Whether this plugin should trigger when a file is saved. Disable this when you want to trigger manually.',
       )
       .addToggle((toggle) =>
         toggle
